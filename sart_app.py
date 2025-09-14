@@ -1,3 +1,4 @@
+import argparse
 import json
 import math
 import os
@@ -54,7 +55,7 @@ def draw_mask(win: visual.Window, color: str) -> visual.ShapeStim:
 
 def run_block(win: visual.Window, font_size_choices: list[int], sequence: list[dict], record_list: list[dict], allow_feedback_mask: bool) -> None:
 
-    stim = visual.TextStim(win, text="", color="white", height=0.1, font="Symbol")
+    stim = visual.TextStim(win, text="", color="white", height=0.1, font="Arial Unicode MS")
 
     isi_clock = core.Clock()
     rt_clock = core.Clock()
@@ -68,24 +69,68 @@ def run_block(win: visual.Window, font_size_choices: list[int], sequence: list[d
 
         event.clearEvents()
         rt_clock.reset()
-
+        responded = False
+        rt_ms = None
+        correct = None
+        
+        # 数字表示開始
         stim.draw()
         win.flip()
-        core.wait(0.250)
-
-        keys = event.getKeys(keyList=["space"], timeStamped=rt_clock)
-        responded = len(keys) > 0
-        rt_ms = None
-        if responded:
-            rt_ms = int(keys[0][1] * 1000)
-
-        correct = (not is_target and responded) or (is_target and not responded)
-        mask_color = "green" if correct else "red"
-
-        circle, line1, line2 = draw_mask(win, mask_color if allow_feedback_mask else "white")
-        circle.draw(); line1.draw(); line2.draw()
-        win.flip()
-        core.wait(0.900)
+        
+        # 反応受付時間: 1150ms (数字250ms + マスク900ms)
+        reaction_window = 1.150
+        reaction_timer = core.Clock()
+        
+        while reaction_timer.getTime() < reaction_window:
+            # ESCキーで終了チェック
+            if event.getKeys(keyList=["escape"]):
+                win.close()
+                core.quit()
+                return
+            
+            # 数字表示中（最初の250ms）
+            if reaction_timer.getTime() < 0.250:
+                # 数字表示中に反応があった場合
+                keys = event.getKeys(keyList=["space"], timeStamped=rt_clock)
+                if keys and not responded:
+                    responded = True
+                    rt_ms = int(keys[0][1] * 1000)
+                    correct = (not is_target and responded) or (is_target and not responded)
+                    
+                    # 反応した瞬間に色付きマスクを表示
+                    if allow_feedback_mask:
+                        mask_color = "green" if correct else "red"
+                        circle, line1, line2 = draw_mask(win, mask_color)
+                        circle.draw(); line1.draw(); line2.draw()
+                        win.flip()
+            
+            # マスク表示期間（250ms以降）
+            else:
+                if not responded:
+                    # まだ反応していない場合、マスク表示中に反応をチェック
+                    keys = event.getKeys(keyList=["space"], timeStamped=rt_clock)
+                    if keys:
+                        responded = True
+                        rt_ms = int(keys[0][1] * 1000)
+                        correct = (not is_target and responded) or (is_target and not responded)
+                        
+                        # 反応した瞬間に色付きマスクに変更
+                        if allow_feedback_mask:
+                            mask_color = "green" if correct else "red"
+                            circle, line1, line2 = draw_mask(win, mask_color)
+                            circle.draw(); line1.draw(); line2.draw()
+                            win.flip()
+                
+                # マスク表示（白または色付き）
+                if not responded or not allow_feedback_mask:
+                    # まだ反応していない場合、またはフィードバックなしの場合
+                    circle, line1, line2 = draw_mask(win, "white")
+                    circle.draw(); line1.draw(); line2.draw()
+                    win.flip()
+        
+        # 最終的な正解判定
+        if correct is None:
+            correct = (not is_target and responded) or (is_target and not responded)
 
         record_list.append({
             "trial_index": trial_index,
@@ -103,12 +148,92 @@ def _points_to_height(points: int) -> float:
 
 
 def show_message_and_wait_space(win: visual.Window, lines: list[str]) -> str:
-
+    """
+    メッセージを表示し、スペースキーを2回連続で押すまで待機する関数
+    
+    誤操作を防ぐため、スペースキーを3秒以内に2回連続で押す必要がある。
+    ESCキーは1回押すだけで終了できる。
+    
+    Args:
+        win: PsychoPyのウィンドウオブジェクト
+        lines: 表示するメッセージの行リスト
+        
+    Returns:
+        str: "space"（スペースキー2回連続）または"escape"（ESCキー）
+    """
     text = "\n".join(lines)
-    stim = visual.TextStim(win, text=text, color="white", height=0.05, wrapWidth=1.6, font="Symbol", alignText="center")
+    stim = visual.TextStim(win, text=text, color="white", height=0.05, wrapWidth=1.6, font="Arial Unicode MS", alignText="center")
     stim.draw()
     win.flip()
-    return event.waitKeys(keyList=["space", "escape"])[0]
+    
+    # スペースキー2回連続押しの制御変数
+    space_count = 0
+    last_space_time = 0
+    space_interval = 3  # 3秒以内に2回押す必要がある
+    
+    while True:
+        keys = event.waitKeys(keyList=["space", "escape"])
+        current_time = core.getTime()
+        
+        if keys[0] == "escape":
+            # ESCキーは1回押すだけで終了
+            win.close()
+            core.quit()
+            return "escape"
+        elif keys[0] == "space":
+            if current_time - last_space_time <= space_interval:
+                # 2回目のスペースキーが時間内に押された → 開始
+                return "space"
+            else:
+                # 1回目のスペースキー → タイマーをリセットして待機継続
+                space_count = 1
+                last_space_time = current_time
+
+
+def show_countdown(win: visual.Window, is_practice: bool = False) -> None:
+    """3秒間のカウントダウンを画面中央に表示"""
+    
+    for i in range(3, 0, -1):
+        # ESCキーで終了チェック
+        if event.getKeys(keyList=["escape"]):
+            win.close()
+            core.quit()
+            return
+        
+        # カウントダウンを画面中央に表示
+        if is_practice:
+            countdown_text = f"練習開始まで {i} 秒"
+        else:
+            countdown_text = f"開始まで {i} 秒"
+        countdown_stim = visual.TextStim(
+            win, 
+            text=countdown_text, 
+            color="white", 
+            height=0.12, 
+            font="Arial Unicode MS", 
+            alignText="center",
+            pos=(0, 0)  # 画面中央に配置
+        )
+        
+        countdown_stim.draw()
+        win.flip()
+        core.wait(1.0)  # 1秒間表示
+    
+    # "開始！"メッセージを0.5秒表示
+    start_text = "開始！"
+    start_stim = visual.TextStim(
+        win, 
+        text=start_text, 
+        color="green", 
+        height=0.15, 
+        font="Arial Unicode MS", 
+        alignText="center",
+        pos=(0, 0)  # 画面中央に配置
+    )
+    
+    start_stim.draw()
+    win.flip()
+    core.wait(0.5)
 
 
 def analyze_and_save(records: list[dict], out_dir: str, tag: str) -> None:
@@ -161,51 +286,108 @@ def analyze_and_save(records: list[dict], out_dir: str, tag: str) -> None:
 
 
 def main():
-
+    # コマンドライン引数の解析
+    parser = argparse.ArgumentParser(description="SART課題アプリケーション")
+    parser.add_argument("--no-practice", action="store_true", help="練習試行をスキップする")
+    parser.add_argument("--trials", type=int, default=225, help="本番試行数（デフォルト: 225）")
+    parser.add_argument("--targets", type=int, default=25, help="ターゲット数（デフォルト: 25）")
+    
+    args = parser.parse_args()
+    
     win = visual.Window(fullscr=True, color="black", units="height")
 
-    start_text = [
-        "SART 課題",
-        "\n",
-        "画面中央に 1〜9 の数字が素早く表示されます。",
-        "数字の 3 以外: スペースキーでできるだけ速く反応してください。",
-        "数字の 3 : キーを押さずに反応を抑制してください。",
-        "\n",
-        "数字は 250ms 表示され、その後 900ms のマスクが出ます。",
-        "正解時は緑のマスク、不正解時は赤のマスクが表示されます。",
-        "正確さと速さの両方を等しく重視してください。",
-        "\n",
-        "スペースキーで練習を開始します。",
-    ]
+    # 練習試行の有無に応じて説明文を調整
+    if args.no_practice:
+        start_text = [
+            "SART 課題",
+            "\n",
+            "画面中央に 1〜9 の数字が素早く表示されます。",
+            "数字の 3 以外: スペースキーでできるだけ速く反応してください。",
+            "数字の 3 : キーを押さずに反応を抑制してください。",
+            "\n",
+            "数字は 250ms 表示され、その後 900ms のマスクが出ます。",
+            "正解時は緑のマスク、不正解時は赤のマスクが表示されます。",
+            "正確さと速さの両方を等しく重視してください。",
+            "\n",
+            "練習開始前に3秒間のカウントダウンが表示されます。",
+            "\n",
+            "スペースキーを2回連続で押して練習を開始してください。",
+        ]
+    else:
+        start_text = [
+            "SART 課題",
+            "\n",
+            "画面中央に 1〜9 の数字が素早く表示されます。",
+            "数字の 3 以外: スペースキーでできるだけ速く反応してください。",
+            "数字の 3 : キーを押さずに反応を抑制してください。",
+            "\n",
+            "数字は 250ms 表示され、その後 900ms のマスクが出ます。",
+            "正解時は緑のマスク、不正解時は赤のマスクが表示されます。",
+            "正確さと速さの両方を等しく重視してください。",
+            "\n",
+            "練習開始前に3秒間のカウントダウンが表示されます。",
+            "\n",
+            "スペースキーを2回連続で押して練習を開始してください。",
+        ]
     show_message_and_wait_space(win, start_text)
 
-    practice_records: list[dict] = []
-    run_block(
-        win,
-        font_size_choices=[48, 72, 94, 100, 120],
-        sequence=generate_practice_sequence(),
-        record_list=practice_records,
-        allow_feedback_mask=True,
-    )
+    # 練習試行の実行（--no-practiceが指定されていない場合のみ）
+    if not args.no_practice:
+        # 練習試行前のカウントダウン
+        show_countdown(win, is_practice=True)
+        
+        practice_records: list[dict] = []
+        run_block(
+            win,
+            font_size_choices=[48, 72, 94, 100, 120],
+            sequence=generate_practice_sequence(),
+            record_list=practice_records,
+            allow_feedback_mask=True,
+        )
 
-    key = show_message_and_wait_space(
-        win,
-        [
-            "練習が終了しました。",
-            "スペースキーで本試行を開始します。",
-            "ESCで終了します。",
-        ],
-    )
-    if key == "escape":
-        win.close()
-        core.quit()
-        return
+        key = show_message_and_wait_space(
+            win,
+            [
+                "練習が終了しました。",
+                "\n",
+                f"本試行数: {args.trials}試行（ターゲット: {args.targets}個）",
+                "\n",
+                "本番試行開始前に3秒間のカウントダウンが表示されます。",
+                "\n",
+                "スペースキーを2回連続で押して本試行を開始してください。",
+            ],
+        )
+        if key == "escape":
+            win.close()
+            core.quit()
+            return
+    else:
+        # no-practiceの場合は練習終了後の画面から開始
+        key = show_message_and_wait_space(
+            win,
+            [
+                "練習が終了しました。",
+                "\n",
+                f"本試行数: {args.trials}試行（ターゲット: {args.targets}個）",
+                "\n",
+                "本番試行開始前に3秒間のカウントダウンが表示されます。",
+                "\n",
+                "スペースキーを2回連続で押して本試行を開始してください。",
+            ],
+        )
+        if key == "escape":
+            win.close()
+            core.quit()
+            return
 
+    # 本番試行前のカウントダウン
+    show_countdown(win)
+    
     records: list[dict] = []
     run_block(
         win,
         font_size_choices=[48, 72, 94, 100, 120],
-        sequence=generate_trial_sequence(225, 25),
+        sequence=generate_trial_sequence(args.trials, args.targets),
         record_list=records,
         allow_feedback_mask=True,
     )

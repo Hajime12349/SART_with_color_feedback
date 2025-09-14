@@ -1,5 +1,2 @@
-# Experiment runtime (precise timing, fullscreen, stimuli)
-psychopy>=2023.2
+psychopy>=2025.1.1
 
-# Optional: for Windows event loop stability (usually pulled in by psychopy)
-pywin32>=305; platform_system == "Windows"
