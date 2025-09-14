@@ -3,6 +3,7 @@ import json
 import math
 import os
 import random
+import logging
 from datetime import datetime
 
 from psychopy import core, event, visual
@@ -22,7 +23,7 @@ def generate_trial_sequence(total_trials: int = 225, target_count: int = 25) -> 
     for d in NONTARGET_DIGITS:
         seq.extend({"digit": d, "is_target": False} for _ in range(nontarget_each))
 
-    random.seed()
+    random.seed(42)  # 固定シードで毎回同じ順序にする
     random.shuffle(seq)
     return seq
 
@@ -40,6 +41,7 @@ def generate_practice_sequence() -> list[dict]:
     while len(nontarget_pool) < remaining:
         nontarget_pool.extend({"digit": d, "is_target": False} for d in NONTARGET_DIGITS)
     seq = base + nontarget_pool[:remaining]
+    random.seed(42)  # 固定シードで毎回同じ順序にする
     random.shuffle(seq)
     return seq
 
@@ -64,6 +66,7 @@ def run_block(win: visual.Window, font_size_choices: list[int], sequence: list[d
         digit = trial["digit"]
         is_target = trial["is_target"]
 
+        random.seed(42 + trial_index)  # 固定シードで毎回同じフォントサイズにする
         stim.height = _points_to_height(random.choice(font_size_choices))
         stim.text = digit
 
@@ -85,6 +88,10 @@ def run_block(win: visual.Window, font_size_choices: list[int], sequence: list[d
             # ESCキーで終了チェック
             if event.getKeys(keyList=["escape"]):
                 win.close()
+                try:
+                    logging.shutdown()
+                except:
+                    pass
                 core.quit()
                 return
             
@@ -178,6 +185,10 @@ def show_message_and_wait_space(win: visual.Window, lines: list[str]) -> str:
         if keys[0] == "escape":
             # ESCキーは1回押すだけで終了
             win.close()
+            try:
+                logging.shutdown()
+            except:
+                pass
             core.quit()
             return "escape"
         elif keys[0] == "space":
@@ -197,6 +208,10 @@ def show_countdown(win: visual.Window, is_practice: bool = False) -> None:
         # ESCキーで終了チェック
         if event.getKeys(keyList=["escape"]):
             win.close()
+            try:
+                logging.shutdown()
+            except:
+                pass
             core.quit()
             return
         
@@ -286,6 +301,9 @@ def analyze_and_save(records: list[dict], out_dir: str, tag: str) -> None:
 
 
 def main():
+    # ログ設定を初期化（PsychoPyのログエラーを防ぐため）
+    logging.basicConfig(level=logging.WARNING)
+    
     # コマンドライン引数の解析
     parser = argparse.ArgumentParser(description="SART課題アプリケーション")
     parser.add_argument("--no-practice", action="store_true", help="練習試行をスキップする")
@@ -359,6 +377,10 @@ def main():
         )
         if key == "escape":
             win.close()
+            try:
+                logging.shutdown()
+            except:
+                pass
             core.quit()
             return
     else:
@@ -377,6 +399,10 @@ def main():
         )
         if key == "escape":
             win.close()
+            try:
+                logging.shutdown()
+            except:
+                pass
             core.quit()
             return
 
@@ -394,8 +420,41 @@ def main():
 
     analyze_and_save(records, out_dir=os.path.join(os.getcwd(), "recoded_data"), tag="main")
 
-    show_message_and_wait_space(win, ["終了しました。スペースキーで閉じます。"])
+    # 終了メッセージを表示（担当者に終わったことを伝えるよう指示）
+    end_text = [
+        "SART課題が終了しました。",
+        "\n",
+        "担当者に終わったことをお伝えください。",
+        "\n",
+        "ESCキーを押すとアプリケーションを終了します。"
+    ]
+    end_stim = visual.TextStim(
+        win, 
+        text="\n".join(end_text), 
+        color="white", 
+        height=0.06, 
+        font="Arial Unicode MS", 
+        alignText="center",
+        pos=(0, 0),
+        wrapWidth=1.6
+    )
+    end_stim.draw()
+    win.flip()
+    
+    # ESCキーが押されるまで待機
+    while True:
+        keys = event.waitKeys(keyList=["escape"])
+        if keys[0] == "escape":
+            break
+
     win.close()
+    
+    # ログをクリアしてから終了（PsychoPyのログエラーを防ぐため）
+    try:
+        logging.shutdown()
+    except:
+        pass
+    
     core.quit()
 
 
